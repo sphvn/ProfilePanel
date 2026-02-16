@@ -1,0 +1,19 @@
+## Interface: 120001
+## Title: ProfilePanel
+## Author: sphvn
+## Version: 0.1.0
+## Notes: Armory-style character panel replacement with clean stat display and gear warnings.
+## SavedVariables: ProfilePanelDB
+## IconTexture: Interface\Icons\INV_Misc_Book_09
+
+# Core
+core\core.lua
+core\events.lua
+core\api.lua
+
+# UI
+ui\frame.lua
+ui\header.lua
+ui\model.lua
+ui\equipment.lua
+ui\stats.lua

@@ -1,0 +1,40 @@
+---
+description: WoW addon TOC file format and directives
+globs: "**/*.toc"
+alwaysApply: false
+---
+
+# TOC File Format
+
+## Required Directives
+
+```
+## Interface: 120001
+## Title: Addon Name
+## Author: Author Name
+## Version: 0.1.0
+## SavedVariables: AddonNameDB
+```
+
+Interface version format: XXYYZZ (XX=expansion, YY=major, ZZ=minor). Current Retail: 120001.
+
+## File Loading
+
+Files load in exact order listed. Lua before XML. Libraries first, then core, then UI modules.
+
+## Comments
+
+Lines starting with `#` are comments. Use for section headers:
+
+```
+# Libraries
+Libs\LibStub.lua
+
+# Core
+core\core.lua
+```
+
+## Dependencies
+
+- `## Dependencies:` - hard requirement, addon fails without
+- `## OptionalDeps:` - loads first if present, not required

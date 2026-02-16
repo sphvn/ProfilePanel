@@ -1,0 +1,33 @@
+---
+description: ProfilePanel WoW addon - project context and architecture
+alwaysApply: true
+---
+
+# ProfilePanel — WoW Addon Project
+
+This is a **World of Warcraft addon** for Retail (Interface 120001) that replaces the default character sheet with a web-armory-inspired UI. It is **not a fork** of any existing addon.
+
+## Context Documents
+
+**Read the `.context/` directory for full project context** — essential if starting a new session:
+
+- `.context/PROJECT.md` — Origin story, key decisions, workspace layout, current status
+- `.context/ARCHITECTURE.md` — File structure, load order, event flow, layout regions, card design
+- `.context/REFERENCES.md` — All external links, ChonkyCharacterSheet API patterns, WoW API calls, slot names
+- `.context/STATS.md` — Complete 3-tier stat system (18 stats), colors, enchant/gem rules
+- `.context/ROADMAP.md` — What's done, what's next, what's out of scope
+
+## Quick Reference
+
+- **Namespace**: `PP` (global: `ProfilePanel`)
+- **Pattern**: `local _, PP = ...` in every file
+- **Events**: `PP_INITIALIZED` → `PP_READY` → `PP_FRAME_CREATED` → `PP_SHOW` / `PP_STATS_UPDATE`
+- **Reference addon**: ChonkyCharacterSheet at `c:\Users\su\src\wow\ChonkyCharacterSheet`
+- **Design target**: https://worldofwarcraft.com/en-us/character/us/illidan/ashkeryn/
+- **Live testing**: Junction links repo to `C:\Program Files (x86)\World of Warcraft\_retail_\Interface\AddOns\ProfilePanel`
+
+## Key APIs
+
+- Stats: `UnitStat()`, `GetCombatRating()`, `GetMasteryEffect()`, `GetHaste()`, `GetSpellCritChance()`, `GetVersatilityBonus()`, `GetAverageItemLevel()`, `GetLifesteal()`, `GetAvoidance()`, `GetSpeed()`, `GetDodgeChance()`, `GetParryChance()`, `GetBlockChance()`, `UnitAttackPower()`, `GetSpellBonusDamage()`, `UnitAttackSpeed()`
+- Equipment: `GetInventoryItemLink()`, `C_Item.GetItemGem()`, `C_TooltipInfo.GetInventoryItem()`
+- Hooks: `hooksecurefunc(CharacterFrame, "Show", fn)`, `hooksecurefunc(PaperDollFrame, "Show", fn)`

@@ -1,0 +1,79 @@
+---
+description: WoW UI framework patterns - frames, textures, anchors, backdrops
+globs: "**/*.lua"
+alwaysApply: false
+---
+
+# WoW UI Framework Patterns
+
+## Frame Creation
+
+```lua
+local frame = CreateFrame("Frame", "PPMainFrame", UIParent, "BackdropTemplate")
+frame:SetSize(width, height)
+frame:SetPoint("CENTER")
+```
+
+Use `BackdropTemplate` for frames needing borders/backgrounds. Use `nil` for global name when not needed.
+
+## Anchor Points
+
+```
+TOPLEFT -------- TOP -------- TOPRIGHT
+LEFT          CENTER          RIGHT
+BOTTOMLEFT --- BOTTOM --- BOTTOMRIGHT
+```
+
+Prefer relative anchoring over absolute positioning. Use `ClearAllPoints()` before re-anchoring.
+
+## Textures and FontStrings
+
+```lua
+-- Background texture
+local bg = frame:CreateTexture(nil, "BACKGROUND")
+bg:SetAllPoints()
+bg:SetColorTexture(0, 0, 0, 0.9)
+
+-- Text
+local text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+text:SetPoint("CENTER")
+text:SetText("Label")
+```
+
+Layer order: BACKGROUND < BORDER < ARTWORK < OVERLAY < HIGHLIGHT
+
+## Backdrop Pattern
+
+```lua
+frame:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 32,
+    insets = { left = 11, right = 12, top = 12, bottom = 11 }
+})
+frame:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
+```
+
+## Hooking Blizzard Frames
+
+```lua
+hooksecurefunc(CharacterFrame, "Show", function()
+    -- Custom behavior when character frame shows
+end)
+```
+
+Never taint secure frames. Use `hooksecurefunc` (post-hook only), never replace secure methods.
+
+## Texture Coloring
+
+Use white-base textures + `SetVertexColor(r, g, b, a)` for recolorable icons. This is how we color the stat diamond icons per stat type.
+
+## Custom Textures
+
+WoW supports TGA and PNG for addon textures. Path format:
+
+```lua
+texture:SetTexture("Interface\\AddOns\\ProfilePanel\\Media\\Textures\\stat-frame")
+```
+
+No file extension needed in the path for TGA/BLP. Include `.png` for PNG files.
