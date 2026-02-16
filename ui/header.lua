@@ -1,18 +1,41 @@
 -- ProfilePanel: Character header — web armory style
 -- Layout:
---   Row 1:  Title (small)                       AchPts   iLvl ILVL
---           Character Name (large, class-colored)
---   Row 2:                            Level Race Spec Class <Guild> Realm
+--   Row 1: [Faction Icon]  Title (small, gold)              [Tab icons] [X]
+--   Row 2: [            ]  Character Name (large, class-colored)
+--   Row 3: [            ]  AchPts  |  iLvl ILVL  |  Level Race Spec Class <Guild> Realm
 local _, PP = ...
 
 local header
 
+local ICON_SIZE    = 46
+local ICON_PADDING = 8
+
+local FACTION_ATLAS = {
+    Horde    = "MountJournalIcons-Horde",
+    Alliance = "MountJournalIcons-Alliance",
+}
+
+--------------------------------------------------------------------------------
+-- Header creation
+--------------------------------------------------------------------------------
 local function CreateHeader(parent)
     header = parent
 
+    -- Faction icon (Horde/Alliance emblem, vertically centered)
+    header.factionIcon = header:CreateTexture(nil, "ARTWORK")
+    header.factionIcon:SetSize(ICON_SIZE, ICON_SIZE)
+    header.factionIcon:SetPoint("LEFT", 4, 0)
+
+    local faction = UnitFactionGroup("player")
+    if faction and FACTION_ATLAS[faction] then
+        header.factionIcon:SetAtlas(FACTION_ATLAS[faction])
+    end
+
+    local textLeft = 4 + ICON_SIZE + ICON_PADDING
+
     -- Title (above name, smaller text, gold-dim)
     header.title = header:CreateFontString(nil, "OVERLAY")
-    header.title:SetPoint("TOPLEFT", 4, -4)
+    header.title:SetPoint("TOPLEFT", textLeft, -4)
     header.title:SetFont(STANDARD_TEXT_FONT, 10)
     header.title:SetTextColor(0.80, 0.78, 0.58)
 
@@ -22,36 +45,25 @@ local function CreateHeader(parent)
     header.name:SetFont(STANDARD_TEXT_FONT, 20, "OUTLINE")
     header.name:SetTextColor(PP:ClassColor())
 
-    -- Right side: Achievement points + ilvl (must be created BEFORE subtitle)
-    -- Item Level (right-aligned)
-    header.ilvl = header:CreateFontString(nil, "OVERLAY")
-    header.ilvl:SetPoint("TOPRIGHT", -4, -6)
-    header.ilvl:SetFont(STANDARD_TEXT_FONT, 13, "OUTLINE")
-    header.ilvl:SetJustifyH("RIGHT")
-    header.ilvl:SetTextColor(1, 0.84, 0)
+    -- Info line: achievements | ilvl | subtitle (single row, left-aligned)
+    header.infoLine = header:CreateFontString(nil, "OVERLAY")
+    header.infoLine:SetPoint("TOPLEFT", header.name, "BOTTOMLEFT", 0, -3)
+    header.infoLine:SetPoint("RIGHT", header, "RIGHT", -4, 0)
+    header.infoLine:SetFont(STANDARD_TEXT_FONT, 10)
+    header.infoLine:SetJustifyH("LEFT")
+    header.infoLine:SetTextColor(0.60, 0.60, 0.60)
 
-    -- Achievement points (left of ilvl)
-    header.achvPoints = header:CreateFontString(nil, "OVERLAY")
-    header.achvPoints:SetPoint("RIGHT", header.ilvl, "LEFT", -14, 0)
-    header.achvPoints:SetFont(STANDARD_TEXT_FONT, 13, "OUTLINE")
-    header.achvPoints:SetJustifyH("RIGHT")
-    header.achvPoints:SetTextColor(1, 0.84, 0)
-
-    -- Subtitle: Level Race Spec Class <Guild> Realm (right-aligned, under achv/ilvl)
-    header.subtitle = header:CreateFontString(nil, "OVERLAY")
-    header.subtitle:SetPoint("TOPRIGHT", header.ilvl, "BOTTOMRIGHT", 0, -2)
-    header.subtitle:SetPoint("LEFT", header, "LEFT", 4, 0)
-    header.subtitle:SetFont(STANDARD_TEXT_FONT, 10)
-    header.subtitle:SetJustifyH("RIGHT")
-    header.subtitle:SetTextColor(0.60, 0.60, 0.60)
 end
 
+--------------------------------------------------------------------------------
+-- Header data refresh
+--------------------------------------------------------------------------------
 local function UpdateHeader()
     if not header then return end
 
     -- Title (active character title, e.g. "Battlemaster")
     local titleText = ""
-    local currentTitle = GetCurrentTitle and GetCurrentTitle() or 0
+    local currentTitle = PP.pendingTitleID or (GetCurrentTitle and GetCurrentTitle() or 0)
     if currentTitle and currentTitle > 0 then
         local rawTitle = GetTitleName and GetTitleName(currentTitle) or ""
         if rawTitle and rawTitle ~= "" then
@@ -60,12 +72,11 @@ local function UpdateHeader()
     end
     header.title:SetText(titleText)
 
-    -- If no title, push name up to title position
+    -- Adjust name position based on title presence
+    header.name:ClearAllPoints()
     if titleText == "" then
-        header.name:ClearAllPoints()
         header.name:SetPoint("TOPLEFT", header.title, "TOPLEFT", 0, 0)
     else
-        header.name:ClearAllPoints()
         header.name:SetPoint("TOPLEFT", header.title, "BOTTOMLEFT", 0, -1)
     end
 
@@ -74,7 +85,31 @@ local function UpdateHeader()
     header.name:SetText(name)
     header.name:SetTextColor(PP:ClassColor())
 
-    -- Subtitle: Level Race Spec Class <Guild> Realm
+    -- Faction icon refresh (in case it wasn't ready at creation time)
+    local faction = UnitFactionGroup("player")
+    if faction and FACTION_ATLAS[faction] then
+        header.factionIcon:SetAtlas(FACTION_ATLAS[faction])
+    end
+
+    -- Build info line: achv | ilvl | level race spec class <guild> realm
+    local infoParts = {}
+
+    -- Achievement points (gold)
+    local achvPts = GetTotalAchievementPoints and GetTotalAchievementPoints() or 0
+    table.insert(infoParts, "|cffFFD700" .. BreakUpLargeNumbers(achvPts) .. "|r")
+
+    -- Item level (gold, or green with diff if bag-best is higher)
+    local avgBest, avgEquipped = GetAverageItemLevel()
+    local equippedIlvl = PP:Round(avgEquipped)
+    local bestIlvl = PP:Round(avgBest)
+    if bestIlvl > equippedIlvl then
+        local diff = bestIlvl - equippedIlvl
+        table.insert(infoParts, "|cff00FF00" .. equippedIlvl .. " ILVL (+" .. diff .. ")|r")
+    else
+        table.insert(infoParts, "|cffFFD700" .. equippedIlvl .. " ILVL|r")
+    end
+
+    -- Subtitle portion: level race spec class <guild> realm
     local level = UnitLevel("player")
     local raceName = UnitRace("player") or ""
     local className = UnitClass("player") or ""
@@ -85,31 +120,27 @@ local function UpdateHeader()
         specName = sName or ""
     end
 
+    local subParts = {}
+    table.insert(subParts, tostring(level))
+    table.insert(subParts, raceName)
+    if specName ~= "" then table.insert(subParts, specName) end
+    table.insert(subParts, className)
+    local subtitleStr = table.concat(subParts, " ")
+
+    -- Guild name in distinctive green
     local guildName = GetGuildInfo("player")
-    local realmName = GetRealmName() or ""
-
-    local parts = {}
-    table.insert(parts, tostring(level))
-    table.insert(parts, raceName)
-    if specName ~= "" then table.insert(parts, specName) end
-    table.insert(parts, className)
-
-    local subtitleStr = table.concat(parts, " ")
     if guildName and guildName ~= "" then
-        subtitleStr = subtitleStr .. "  <" .. guildName .. ">"
+        subtitleStr = subtitleStr .. "  |cff78c846<" .. guildName .. ">|r"
     end
+
+    local realmName = GetRealmName() or ""
     subtitleStr = subtitleStr .. "  " .. realmName
 
-    header.subtitle:SetText(subtitleStr)
+    table.insert(infoParts, subtitleStr)
 
-    -- Achievement points
-    local achvPts = GetTotalAchievementPoints and GetTotalAchievementPoints() or 0
-    header.achvPoints:SetText("|cffFFD700" .. BreakUpLargeNumbers(achvPts) .. "|r")
-
-    -- Item level
-    local _, avgEquipped = GetAverageItemLevel()
-    local ilvlNum = PP:Round(avgEquipped)
-    header.ilvl:SetText("|cffFFD700" .. ilvlNum .. " ILVL|r")
+    -- Join with gray pipe separators  (|| renders as literal | in WoW text)
+    local sep = "  |cff666666|||r  "
+    header.infoLine:SetText(table.concat(infoParts, sep))
 end
 
 --------------------------------------------------------------------------------

@@ -2,13 +2,22 @@
 local _, PP = ...
 
 local FRAME_WIDTH  = 730
-local FRAME_HEIGHT = 650
+local FRAME_HEIGHT = 615
 local HEADER_HEIGHT = 70
-local STATS_PANEL_WIDTH = 146
-local GEAR_COL_WIDTH = 46
+local STATS_PANEL_WIDTH = 200
+
+local TAB_BAR_HEIGHT = 28
 
 local MainFrame
 local hiddenElements = {}
+
+-- View state: "character", "reputation", "currency"
+local currentView = "character"
+
+-- Persistent elements (parented to CharacterFrame, survive PaperDollFrame hide)
+local repCurrOverlay   -- dark bg + border for rep/currency views
+local tabBar           -- bottom tab strip
+local bottomTabBtns = {}
 
 --------------------------------------------------------------------------------
 -- Blizzard chrome — hide/show helpers
@@ -64,7 +73,7 @@ local function HideBlizzardChrome()
     -- Default stat pane
     HideElement(CharacterStatsPane)
 
-    -- Bottom tabs (Summary / Reputation / Currency)
+    -- Blizzard bottom tabs (we provide our own)
     HideElement(CharacterFrameTab1)
     HideElement(CharacterFrameTab2)
     HideElement(CharacterFrameTab3)
@@ -147,18 +156,20 @@ end
 
 --------------------------------------------------------------------------------
 -- Layout containers
--- ┌───────────────────────────────────────────┬──────────────┐
--- │  Header (full width)                      │              │
--- ├──────┬──────────────────┬──────┬──────────┤  Stats Panel │
--- │ Left │                  │Right │ vert sep │  (scrollable)│
--- │ Gear │   Model Area     │ Gear │          │              │
--- ├──────┴──────┬───────────┴──────┤          │              │
--- │  Weapon Row │                  │          │              │
--- └─────────────┴──────────────────┴──────────┴──────────────┘
+-- ┌──────────────────────────────────────────┬──────────────┐
+-- │  Header (70px)                           │              │
+-- ├──────────────────────────────────────────┤  Stats Panel │
+-- │ [icon] Name         Name [icon]  vert sep│  (scrollable)│
+-- │        ilvl             ilvl     │       │              │
+-- │        Enchant       Enchant     │       │              │
+-- │                                  │       │              │
+-- │     (Model fills entire area)    │       │              │
+-- │                                  │       │              │
+-- │     [MH icon] Name  [OH icon]    │       │              │
+-- └──────────────────────────────────┴───────┴──────────────┘
+-- [ Character ]  [ Reputation ]  [ Currency ]
 --------------------------------------------------------------------------------
 local function CreateLayout(parent)
-    local leftWidth = FRAME_WIDTH - STATS_PANEL_WIDTH
-
     -- Header region (full width)
     parent.header = CreateFrame("Frame", nil, parent)
     parent.header:SetPoint("TOPLEFT", 8, -4)
@@ -172,57 +183,283 @@ local function CreateLayout(parent)
     headerSep:SetHeight(1)
     headerSep:SetColorTexture(1, 1, 1, 0.08)
 
-    -- Equipment left column
+    -- Content area (below header, left of stats panel)
     local contentTop = -(HEADER_HEIGHT + 8)
-    parent.gearLeft = CreateFrame("Frame", nil, parent)
-    parent.gearLeft:SetPoint("TOPLEFT", 8, contentTop)
-    parent.gearLeft:SetSize(GEAR_COL_WIDTH, 370)
 
-    -- Equipment right column (left of stats panel)
-    parent.gearRight = CreateFrame("Frame", nil, parent)
-    parent.gearRight:SetPoint("TOPLEFT", leftWidth - GEAR_COL_WIDTH - 8, contentTop)
-    parent.gearRight:SetSize(GEAR_COL_WIDTH, 370)
-
-    -- Model region (between equipment columns)
+    -- Model region (fills entire content area, equipment overlays on top)
     parent.modelArea = CreateFrame("Frame", nil, parent)
-    parent.modelArea:SetPoint("TOPLEFT", parent.gearLeft, "TOPRIGHT", 4, 0)
-    parent.modelArea:SetPoint("BOTTOMRIGHT", parent.gearRight, "BOTTOMLEFT", -4, 50)
+    parent.modelArea:SetPoint("TOPLEFT", 8, contentTop)
+    parent.modelArea:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -(STATS_PANEL_WIDTH + 8), 4)
 
-    -- Weapon row (below model, spanning left section)
-    parent.weaponRow = CreateFrame("Frame", nil, parent)
-    parent.weaponRow:SetPoint("TOPLEFT", parent.gearLeft, "BOTTOMLEFT", 0, -4)
-    parent.weaponRow:SetPoint("RIGHT", parent.gearRight, "RIGHT", 0, 0)
-    parent.weaponRow:SetHeight(42)
-
-    -- Vertical separator between left section and stats panel
+    -- Vertical separator between model section and stats panel
     local vertSep = parent:CreateTexture(nil, "ARTWORK")
-    vertSep:SetPoint("TOPLEFT", parent, "TOPLEFT", leftWidth, contentTop)
-    vertSep:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", leftWidth, 8)
+    vertSep:SetPoint("TOPLEFT", parent.modelArea, "TOPRIGHT", 0, 0)
+    vertSep:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", FRAME_WIDTH - STATS_PANEL_WIDTH, 8)
     vertSep:SetWidth(1)
     vertSep:SetColorTexture(1, 1, 1, 0.08)
 
-    -- Stats panel (right side)
+    -- Stats panel (right side, scrollable)
     parent.statsPanel = CreateFrame("Frame", nil, parent)
-    parent.statsPanel:SetPoint("TOPLEFT", parent, "TOPLEFT", leftWidth + 4, contentTop)
+    parent.statsPanel:SetPoint("TOPLEFT", parent.modelArea, "TOPRIGHT", 4, 0)
     parent.statsPanel:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -8, 8)
 
-    -- Stats content area (direct child, no scroll for now)
-    parent.statsArea = parent.statsPanel
+    -- Manual scroll frame (no Blizzard template to avoid compatibility issues)
+    local scroll = CreateFrame("ScrollFrame", nil, parent.statsPanel)
+    scroll:SetAllPoints()
+    scroll:EnableMouseWheel(true)
+
+    local scrollChild = CreateFrame("Frame", nil, scroll)
+    scrollChild:SetWidth(STATS_PANEL_WIDTH - 8)
+    scrollChild:SetHeight(1) -- dynamically set by stats.lua
+    scroll:SetScrollChild(scrollChild)
+
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll()
+        local maxScroll = max(0, scrollChild:GetHeight() - self:GetHeight())
+        local newScroll = max(0, min(current - (delta * 30), maxScroll))
+        self:SetVerticalScroll(newScroll)
+    end)
+
+    parent.statsScrollFrame = scroll
+    parent.statsArea = scrollChild
+end
+
+--------------------------------------------------------------------------------
+-- Bottom tab bar — custom Character / Reputation / Currency tabs
+-- Parented to CharacterFrame so it stays visible across all views.
+--------------------------------------------------------------------------------
+local function UpdateBottomTabHighlights()
+    local activeID = currentView == "character" and 1
+                  or currentView == "reputation" and 2
+                  or 3
+    for _, btn in ipairs(bottomTabBtns) do
+        if btn.tabID == activeID then
+            btn.label:SetTextColor(1, 0.84, 0)
+            btn.activeBar:Show()
+        else
+            btn.label:SetTextColor(0.50, 0.50, 0.50)
+            btn.activeBar:Hide()
+        end
+    end
+end
+
+local function CreateBottomTabBar()
+    tabBar = CreateFrame("Frame", "ProfilePanelTabBar", CharacterFrame)
+    tabBar:SetPoint("TOPLEFT", PaperDollFrame, "TOPLEFT", 0, -FRAME_HEIGHT)
+    tabBar:SetSize(FRAME_WIDTH, TAB_BAR_HEIGHT)
+    tabBar:SetFrameLevel(CharacterFrame:GetFrameLevel() + 30)
+
+    -- Tab bar background
+    local bg = tabBar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.06, 0.06, 0.10, 0.97)
+
+    -- Top separator line
+    local sep = tabBar:CreateTexture(nil, "BORDER")
+    sep:SetPoint("TOPLEFT", 0, 0)
+    sep:SetPoint("TOPRIGHT", 0, 0)
+    sep:SetHeight(1)
+    sep:SetColorTexture(1, 1, 1, 0.08)
+
+    -- Tab definitions
+    local BOTTOM_TABS = {
+        { id = 1, label = "Character" },
+        { id = 2, label = "Reputation" },
+        { id = 3, label = "Currency" },
+    }
+
+    local tabWidth = 100
+    local gap = 2
+
+    for i, def in ipairs(BOTTOM_TABS) do
+        local btn = CreateFrame("Button", nil, tabBar)
+        btn:SetSize(tabWidth, TAB_BAR_HEIGHT - 2)
+        btn:SetPoint("BOTTOMLEFT", tabBar, "BOTTOMLEFT",
+                     8 + (i - 1) * (tabWidth + gap), 1)
+
+        btn.label = btn:CreateFontString(nil, "OVERLAY")
+        btn.label:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
+        btn.label:SetPoint("CENTER")
+        btn.label:SetText(def.label)
+        btn.label:SetTextColor(0.50, 0.50, 0.50)
+
+        -- Active indicator (gold top bar)
+        btn.activeBar = btn:CreateTexture(nil, "OVERLAY")
+        btn.activeBar:SetPoint("TOPLEFT", 2, 0)
+        btn.activeBar:SetPoint("TOPRIGHT", -2, 0)
+        btn.activeBar:SetHeight(2)
+        btn.activeBar:SetColorTexture(1, 0.84, 0, 0.8)
+        btn.activeBar:Hide()
+
+        -- Hover
+        btn:SetScript("OnEnter", function(self)
+            if self.tabID ~= (currentView == "character" and 1
+                           or currentView == "reputation" and 2 or 3) then
+                self.label:SetTextColor(0.80, 0.80, 0.80)
+            end
+        end)
+        btn:SetScript("OnLeave", function()
+            UpdateBottomTabHighlights()
+        end)
+
+        -- Click: trigger the corresponding Blizzard tab
+        btn:SetScript("OnClick", function()
+            local blizzTab = _G["CharacterFrameTab" .. def.id]
+            if blizzTab then blizzTab:Click() end
+        end)
+
+        btn.tabID = def.id
+        table.insert(bottomTabBtns, btn)
+    end
+
+    tabBar:Hide()
+    PP.tabBar = tabBar
+end
+
+--------------------------------------------------------------------------------
+-- Rep / Currency overlay — dark background + border for non-character views
+-- Parented to CharacterFrame so it stays visible when PaperDollFrame hides.
+--------------------------------------------------------------------------------
+-- Elements hidden during rep/currency view that need restoring
+local repCurrHidden = {}
+
+local function HideRepCurrElement(element)
+    if element and element.Hide then
+        element:Hide()
+        repCurrHidden[element] = true
+    end
+end
+
+local function RestoreRepCurrElements()
+    for element in pairs(repCurrHidden) do
+        if element.Show then element:Show() end
+        if element.SetAlpha then element:SetAlpha(1) end
+        if element.EnableMouse then element:EnableMouse(true) end
+    end
+    wipe(repCurrHidden)
+end
+
+local function CreateRepCurrOverlay()
+    repCurrOverlay = CreateFrame("Frame", "ProfilePanelRepCurrOverlay", CharacterFrame)
+    repCurrOverlay:SetPoint("TOPLEFT", PaperDollFrame, "TOPLEFT", 0, 0)
+    repCurrOverlay:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
+    repCurrOverlay:SetFrameLevel(CharacterFrame:GetFrameLevel() + 2)
+
+    repCurrOverlay.bg = repCurrOverlay:CreateTexture(nil, "BACKGROUND")
+    repCurrOverlay.bg:SetAllPoints()
+    repCurrOverlay.bg:SetColorTexture(unpack(PP.BgColor))
+
+    CreateBorder(repCurrOverlay)
+    CreateCloseButton(repCurrOverlay)
+
+    -- View title (shared between Reputation and Currency)
+    repCurrOverlay.title = repCurrOverlay:CreateFontString(nil, "OVERLAY")
+    repCurrOverlay.title:SetFont(STANDARD_TEXT_FONT, 20, "OUTLINE")
+    repCurrOverlay.title:SetPoint("TOPLEFT", 16, -14)
+    repCurrOverlay.title:SetTextColor(1, 1, 1)
+
+    -- Thin separator below title
+    repCurrOverlay.titleSep = repCurrOverlay:CreateTexture(nil, "ARTWORK")
+    repCurrOverlay.titleSep:SetPoint("TOPLEFT", repCurrOverlay.title, "BOTTOMLEFT", -4, -8)
+    repCurrOverlay.titleSep:SetPoint("RIGHT", repCurrOverlay, "RIGHT", -12, 0)
+    repCurrOverlay.titleSep:SetHeight(1)
+    repCurrOverlay.titleSep:SetColorTexture(1, 1, 1, 0.08)
+
+    repCurrOverlay:Hide()
+end
+
+local TITLE_AREA_HEIGHT = 46  -- title + separator + padding
+
+local function ShowRepCurrView(viewName)
+    currentView = viewName
+    RestoreRepCurrElements()
+
+    -- Show dark overlay (MainFrame is already hidden since PaperDollFrame hid)
+    repCurrOverlay:Show()
+
+    -- Suppress Blizzard tabs — using alpha+mouse disable because
+    -- PanelTemplates_SetTab re-shows them on subcategory interaction.
+    for _, tabName in ipairs({ "CharacterFrameTab1", "CharacterFrameTab2", "CharacterFrameTab3" }) do
+        local tab = _G[tabName]
+        if tab then
+            tab:SetAlpha(0)
+            tab:EnableMouse(false)
+            repCurrHidden[tab] = true
+        end
+    end
+
+    if viewName == "reputation" then
+        repCurrOverlay.title:SetText("Reputation")
+
+        -- Reposition ReputationFrame to fill the overlay
+        if ReputationFrame then
+            ReputationFrame:ClearAllPoints()
+            ReputationFrame:SetPoint("TOPLEFT", repCurrOverlay, "TOPLEFT", 4, -4)
+            ReputationFrame:SetPoint("BOTTOMRIGHT", repCurrOverlay, "BOTTOMRIGHT", -4, 4)
+
+            -- Reposition ScrollBox to fill the area below the title
+            if ReputationFrame.ScrollBox then
+                ReputationFrame.ScrollBox:ClearAllPoints()
+                ReputationFrame.ScrollBox:SetPoint("TOPLEFT", repCurrOverlay, "TOPLEFT", 12, -TITLE_AREA_HEIGHT)
+                ReputationFrame.ScrollBox:SetPoint("BOTTOMRIGHT", repCurrOverlay, "BOTTOMRIGHT", -30, 8)
+            end
+
+            -- Hide the "All" filter dropdown
+            if ReputationFrame.filterDropdown then
+                HideRepCurrElement(ReputationFrame.filterDropdown)
+            end
+        end
+
+    else -- currency
+        repCurrOverlay.title:SetText("Currency")
+
+        -- Reposition TokenFrame to fill the overlay
+        if TokenFrame then
+            TokenFrame:ClearAllPoints()
+            TokenFrame:SetPoint("TOPLEFT", repCurrOverlay, "TOPLEFT", 4, -4)
+            TokenFrame:SetPoint("BOTTOMRIGHT", repCurrOverlay, "BOTTOMRIGHT", -4, 4)
+
+            -- Reposition ScrollBox to fill the area below the title
+            if TokenFrame.ScrollBox then
+                TokenFrame.ScrollBox:ClearAllPoints()
+                TokenFrame.ScrollBox:SetPoint("TOPLEFT", repCurrOverlay, "TOPLEFT", 12, -TITLE_AREA_HEIGHT)
+                TokenFrame.ScrollBox:SetPoint("BOTTOMRIGHT", repCurrOverlay, "BOTTOMRIGHT", -30, 8)
+            end
+
+            -- Hide the filter dropdown ("Ashkeryn Only" etc.)
+            if TokenFrame.filterDropdown then
+                HideRepCurrElement(TokenFrame.filterDropdown)
+            end
+
+            -- Hide the bonus currency / backpack token frame
+            if BackpackTokenFrame then
+                HideRepCurrElement(BackpackTokenFrame)
+            end
+        end
+    end
+
+    UpdateBottomTabHighlights()
+end
+
+local function HideRepCurrView()
+    RestoreRepCurrElements()
+    if repCurrOverlay then
+        repCurrOverlay:Hide()
+    end
+    currentView = "character"
 end
 
 --------------------------------------------------------------------------------
 -- Create the main frame
 --------------------------------------------------------------------------------
 local function CreateMainFrame()
-    -- The original pattern that worked: SetSize on CharacterFrame + two-point anchor
-    CharacterFrame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
-
     MainFrame = CreateFrame("Frame", "ProfilePanelFrame", PaperDollFrame)
     PP.MainFrame = MainFrame
 
-    MainFrame:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", 0, 0)
-    MainFrame:SetPoint("BOTTOMRIGHT", CharacterFrame, "BOTTOMRIGHT", 0, 0)
-    MainFrame:SetFrameLevel(PaperDollFrame:GetFrameLevel() + 5)
+    -- Single-point anchor + explicit size (don't depend on CharacterFrame's size)
+    MainFrame:SetPoint("TOPLEFT", PaperDollFrame, "TOPLEFT", 0, 0)
+    MainFrame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
+    MainFrame:SetFrameLevel(PaperDollFrame:GetFrameLevel() + 20)
 
     -- Dark background
     MainFrame.bg = MainFrame:CreateTexture(nil, "BACKGROUND")
@@ -243,9 +480,22 @@ end
 local function ShowPanel()
     if not MainFrame then return end
 
+    -- If already showing the character view, just refresh data (don't re-run
+    -- the full show logic, which would interfere with context menus, tooltips, etc.)
+    if MainFrame:IsShown() and currentView == "character" then
+        PP:FireEvent("PP_STATS_UPDATE")
+        return
+    end
+
     HideBlizzardChrome()
+    HideRepCurrView()
 
     MainFrame:Show()
+    if tabBar then tabBar:Show() end
+
+    currentView = "character"
+    UpdateBottomTabHighlights()
+
     PP:FireEvent("PP_SHOW")
     PP:FireEvent("PP_STATS_UPDATE")
 end
@@ -253,16 +503,20 @@ end
 local function HidePanel()
     if not MainFrame then return end
     MainFrame:Hide()
+    HideRepCurrView()
+
+    if tabBar then tabBar:Hide() end
 
     RestoreBlizzardChrome()
 
     PP:FireEvent("PP_HIDE")
 end
 
--- Helper for our close button
+-- Helper for our close button — use HideUIPanel so UIParentPanelManager
+-- properly releases the frame slot (plain :Hide() causes position drift).
 function HideDefaultUI()
     if CharacterFrame and CharacterFrame:IsShown() then
-        CharacterFrame:Hide()
+        HideUIPanel(CharacterFrame)
     end
 end
 
@@ -271,21 +525,66 @@ end
 --------------------------------------------------------------------------------
 PP:RegisterEvent("PP_READY", function()
     CreateMainFrame()
+    CreateBottomTabBar()
+    CreateRepCurrOverlay()
     PP:FireEvent("PP_FRAME_CREATED")
 
+    -- Character frame opens with PaperDoll visible → show our panel
     hooksecurefunc(CharacterFrame, "Show", function()
         if PaperDollFrame and PaperDollFrame:IsShown() then
             ShowPanel()
         end
     end)
+
+    -- PaperDoll explicitly shown (tab switch back to Character)
     hooksecurefunc(PaperDollFrame, "Show", function()
         ShowPanel()
     end)
+
+    -- PaperDoll explicitly hidden (tab switch to Rep/Currency)
+    -- NOTE: This only fires on explicit :Hide() calls (tab switch),
+    -- NOT when PaperDollFrame hides implicitly via CharacterFrame:Hide().
     hooksecurefunc(PaperDollFrame, "Hide", function()
-        HidePanel()
+        if MainFrame then
+            MainFrame:Hide()
+            PP:FireEvent("PP_HIDE")
+        end
     end)
+
+    -- CharacterFrame closes entirely → full cleanup
     hooksecurefunc(CharacterFrame, "Hide", function()
         HidePanel()
     end)
+
+    -- Reputation / Currency frame hooks (guarded in case frames are load-on-demand)
+    if ReputationFrame then
+        hooksecurefunc(ReputationFrame, "Show", function()
+            if tabBar and tabBar:IsShown() then
+                ShowRepCurrView("reputation")
+            end
+        end)
+    end
+    if TokenFrame then
+        hooksecurefunc(TokenFrame, "Show", function()
+            if tabBar and tabBar:IsShown() then
+                ShowRepCurrView("currency")
+            end
+        end)
+    end
+
+    -- Suppress Blizzard tab re-shows during rep/currency views.
+    -- PanelTemplates_SetTab calls :Show() on the active tab when subcategories
+    -- are clicked. We hook each tab's Show to force alpha=0 while in rep/currency.
+    for _, tabName in ipairs({ "CharacterFrameTab1", "CharacterFrameTab2", "CharacterFrameTab3" }) do
+        local tab = _G[tabName]
+        if tab then
+            hooksecurefunc(tab, "Show", function(self)
+                if currentView ~= "character" and repCurrOverlay and repCurrOverlay:IsShown() then
+                    self:SetAlpha(0)
+                    self:EnableMouse(false)
+                end
+            end)
+        end
+    end
 
 end)

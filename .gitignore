@@ -1,0 +1,13 @@
+# Serena / Cursor agent
+.serena/
+.context/
+.cursor/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Temp scripts
+convert_icons.py
+colorize_icons.py
